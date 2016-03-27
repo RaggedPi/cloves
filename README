@@ -1,0 +1,12 @@
+RaggedPi Project
+Codename: Cloves
+
+Exterior Arduino unit
+
+Features:
+- Xbee2
+- temperature/ humidity sensor
+- weather station
+- sun tracker
+- motor servo
+
