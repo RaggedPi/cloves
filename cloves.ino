@@ -90,8 +90,73 @@ void readLdrArray() {
     int rd = analogRead(LDRRD);
 
     // Read potentiometers
-    int dtime = analogRead(4);
-    int tol = analogRead(5)/4;
+    int dtime = analogRead(POTENTIOMETER1);
+    int tolerance = analogRead(POTENTIOMETER2)/4;
+
+    // Calculate average values
+    int avt = (lt + rt) / 2; // top
+    int avd = (ld + rd) / 2; // down
+    int avl = (lt + ld) / 2; // left
+    int avr = (rt + rd) / 2; // right
+
+    // Calculate differences
+    int dvert = avt - avd; // up and down
+    int dhoriz = avl - avr; // left and rigt
+
+    // Move servos as needed
+    moveServo(&vServo, dvert, avt, avd, tolerance, VERTICALSERVO);
+    moveServo(&hServo, dhoriz, avr, avl, tolerance, HORIZONTALSERVO);
+    delay(dtime);
+
+
+}
+
+/**
+ * Move servo
+ * @param  int  servo         
+ * @param  int  difference    
+ * @param  int  avgA          
+ * @param  int  avgB          
+ * @param  int  tolerance     
+ * @param  bool axis          
+  */
+void moveServo(int servo, int difference, int avgA, int avgB, int tolerance, bool axis = 0) {
+    #ifdef DEBUG
+    Serial.println("[DEBUG] Entered moveServo.");
+    Serial.print("Passed Param: servo = ");
+    Serial.print(servo);
+    Serial.print("\nPassed Param: difference = ");
+    Serial.print(difference);
+    Serial.print("\nPassed Param: avgA = ");
+    Serial.print(avgA);
+    Serial.print("\nPassed Param: avgB = ");
+    Serial.print(avgB);
+    Serial.print("\nPassed Param: Tolerance = ");
+    Serial.print(tolerance);
+    Serial.print("\nPassed Param: axis = ");
+    Serial.print(axis);
+    Serial.print("\n");
+    #endif
+    
+    if (-1*tolerance > difference || difference > tolerance) {
+        if (avgA > avgB) {
+            servo = ++vServo;
+            if (servo > 180) {
+                servo = 180;
+            }
+        } else if (avgA < avgB) {
+            servo= --servo;
+            if (servo < 0) {
+                servo = 0;
+            }
+        }
+
+        if (axis) {
+            vertical.write(servo);
+        } else {
+            horizontal.write(servo);
+        }
+    }
 }
 
 /**
