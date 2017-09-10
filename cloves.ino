@@ -4,62 +4,57 @@
   Written by david durost <david.durost@gmail.com>
 */
 /* Includes */
-#include <SoftwareSerial.h>             // Serial library
-#include <Wire.h>                       // One Wire library
-#include <SDL_Weather_80422.h>          // Weather Station library
-#include <Adafruit_ADS1015.h>           // 
-#include <Adafruit_HTU21DF.h>           // Humidity library
-#include <SPI.h>                        // SPI library
-#include <PWFusion_AS3935.h>            // Lightning Detection library
-#include <SFE_BMP180.h>                 // Barometric Pressure library
-#include <Time.h>                       // Time library
+#include <SoftwareSerial.h>                 // Serial library
+#include <Wire.h>                           // One Wire library
+#include <SDL_Weather_80422.h>              // Weather Station library
+#include <Adafruit_ADS1015.h>               // 
+#include <Adafruit_HTU21DF.h>               // Humidity library
+#include <SPI.h>                            // SPI library
+#include <PWFusion_AS3935.h>                // Lightning Detection library
+#include <SFE_BMP180.h>                     // Barometric Pressure library
+#include <Time.h>                           // Time library
 
 /* Misc Constants */
-#define SDA 20                          // sda
-#define SDL 21                          // sdl
-#define CS 53                           // chipselect
-#define LED 13                          // led pin
-#define SI 4                            // select input
-// weatherstation
-#define ANEM_PIN 18                     // digital pin
-#define ANEM_INT 5                      // int                 
-#define RAIN_PIN 7                      // digital pin
-#define RAIN_INT 1                      // int
-#define SAMPLE_TIME 5.0                 // float
-#define MODE SDL_MODE_SAMPLE            //
-#define ALTITUDE 1655.0                 // Altitude in meters
-#define ALTITUDE_F (_m2ft(ALTITUDE))    // Altitude in feet (m*3.28084)
-// potentiometers
-#define POTENTIOMETER1_PIN 4            // analog pin
-#define POTENTIOMETER2_PIN 5            // analog pin
-// lightning arrestor
-#define AS3935PIN 2                     // analog pin AS3935 IRQ
-#define AS3935_IN 0                     //
-#define AS3935_OUT 1                    //
-#define AS3936_DIST_DIS 0               //
-#define AS3935_DIST_EN 1                //
-#define AS3935_CAPACITANCE 104          // on board
+#define SDA 20                              // sda
+#define SDL 21                              // sdl
+#define CS 53                               // chipselect
+#define LED 13                              // led pin
+#define SI 4                                // select input
+// Barometric pressure
+#define ABS 0
+#define SEA 1
+#define ABS_HG 2
+#define SEA_HG 3
+#define MB2INHG 0.0295333727
+// Weatherstation
+#define ANEM_PIN 18                         // digital pin
+#define ANEM_INT 5                          // int                 
+#define RAIN_PIN 2                          // digital pin
+#define RAIN_INT 1                          // int
+#define SAMPLE_TIME 5.0                     // float
+#define MODE SDL_MODE_SAMPLE                //
+#define ALTITUDE 145.0                     // Altitude in meters
+#define ALTITUDE_F (_m2ft(ALTITUDE))        // Altitude in feet (m*3.28084)
+// Lightning arrestor
+#define AS3935_PIN 2                        // analog pin AS3935 IRQ
+#define AS3935_IN 0                         //
+#define AS3935_OUT 1                        //
+#define AS3936_DIST_DIS 0                   //
+#define AS3935_DIST_EN 1                    //
+#define AS3935_CAPACITANCE 104              // on board
 
-/* Objects */
-void AS3935_ISR();                      // initalize arrestor
+void AS3935_ISR();
+
 SDL_Weather_80422 weatherStation(
-    ANEM_PIN, RAIN_PIN,
-    ANEM_INT, RAIN_INT,
-    A0, SDL_MODE_INTERNAL_AD);          // weatherstation
-Adafruit_HTU21DF htu = Adafruit_HTU21DF(); // humidity sensor
-PWF_AS3935 AS3935(CS, AS3935PIN, SI);   // lightning arrestor 
-SFE_BMP180 pressure;                    // pressure object
+    ANEM_PIN, RAIN_PIN, ANEM_INT, RAIN_INT, A0, SDL_MODE_INTERNAL_AD
+);
+Adafruit_HTU21DF htu = Adafruit_HTU21DF();
+PWF_AS3935 AS3935(CS, AS3935_PIN, SI);
+SFE_BMP180 barometricPressure;
 
-/* Variables */
-float cWindSp;                          // current wind speed
-float cWindDir;                         // current wind direction
-float cGust;                            // current wind gust speed
-float rainfall;                         // total rainfall
-double Bmp;                             // pressure placeholder
-double Temp;                            // temperature placeholder
-volatile int AS3935_ISR_Trig = 0;       // interrupt
-char* msg;                              // reused variable
-char status;                            // reused variable
+double tempC, tempF, p, bmp[] = { 0.0, 0.0, 0.0, 0.0 };
+float curWindGust, curWindDirection, curWindSpeed, rainfall;
+volatile int AS3935_ISR_Trig = 0;
 
 /**
  * Meters to feet conversiuon
@@ -81,67 +76,78 @@ int _km2ft(int km) {
 }
 
 /**
- * Get temperature string
- * @param  bool fahrenheit return temperature in celsius or fahrenheit
- * @param  bool longform return temperature string with a descriptor
- * @return char*
+ * Kilometers to miles conversion
+ * @param  int km 
+ * @return int
  */
-char* getTemperatureStr(bool fahrenheit=false, bool longform=false) {
-    status = pressure.startTemperature(); // returns ms read time
-    if (0 != status) {
-        delay(5);
-        status = pressure.getTemperature(Temp); // return 1 or 0, reading stored in Temp
-        if (0 != status) {
-            char *tmp;
-            char cf = 'C';
-            double t = Temp;
-
-            if (fahrenheit) {
-                cf = 'F';
-                t = ((9.0/5.0)*Temp)+32.0;
-            }
-
-            sprintf(tmp, "%d %c %c", (int)t, 0176, cf); 
-            if (longform)   sprintf(msg, "temperature: %s", tmp);
-            else    sprintf(msg, "%s", tmp);
-            return msg;
-        } else  Serial.println("[Warning] Failed to read temperature.");
-    } else  Serial.println("[Warning] Failed to start temperature sensor.");
-    return 0;
+int _km2mi(int km) {
+    return (km * 0.62137);
 }
 
 /**
- * Get barometric pressure string
- * @param  bool absOrSea true for sealevel pressure, false for current pressure
- * @param  bool mbOrInHg true for inHg, false for mb
- * @param  bool longform true for descriptor
- * @return char*
+ * AS3935 interrupt handler
  */
-char* getPressureStr(bool absOrSea=false, bool mbOrInHg=false, bool longform=false) {
-    if (0 == Temp)  status = pressure.getTemperature(Temp);
-    status = pressure. startPressure(3);     // [0-3] resolution, returns ms read time
-    if (0 != status) {
-        delay(status);
-        status = pressure.getPressure(Bmp,Temp);    // returns 0 or 1
-        if (0 != status) {
-            char *mb = "mb";
-            double p = Bmp;
-            if (absOrSea)   p = pressure.sealevel(Bmp, ALTITUDE);
-            if (mbOrInHg) {
-                mb = "inHg";
-                p *= 0.0295333727;
-            }
-            sprintf(msg, "%d %s", p, mb);
-            if (longform) {
-                status = '\0';
-                if (absOrSea)   status = 'sealevel ';
-                char *msg2 = msg;
-                sprintf(msg, "%sbarometric pressure: %s", status, msg2);
-            }
-            return msg;
-        } else  Serial.println("[Warning] Failed to get pressure.");
-    }   else Serial.println("[Warning] Failed to start pressure.");
-    return 0;
+void AS3935_ISR() {
+    AS3935_ISR_Trig = 1;
+}
+
+/**
+ * Read temperature
+ */
+void readTemperature() {
+    if (0 != barometricPressure.startTemperature()) {
+        delay(5);
+        if (0 != barometricPressure.getTemperature(tempC)) {
+            tempF = ((9.0/5.0)*tempC)+32.0;
+        } else Serial.println("[WARN] Could not read temperature");
+    } else Serial.println("[WARN] Could not start temperature sensor.");
+}
+
+/**
+ * Print temperature
+ * @param  int cf_c_f 0: both (default), 1: celsius, 2: fahrenheit
+ */
+void printTemperature(int cf_c_f = 0) {
+    if (0 == cf_c_f || 1 == cf_c_f) {
+        Serial.print((int)tempC);
+        Serial.print("C ");
+    }
+    if (0 == cf_c_f || 2 == cf_c_f) {
+        Serial.print((int)tempF);
+        Serial.print("F ");
+    }
+}
+
+/**
+ * Read barometric pressure
+ */
+void readBarometricPressure() {
+    int p;
+    if(0 == tempC)  p = barometricPressure.getTemperature(tempC);
+    p = barometricPressure.startPressure(3); // [0-3] resolution, return ms read time
+    if (0 != p) {
+        delay(p);
+        if (0 != barometricPressure.getPressure(bmp[ABS], tempC)) {
+            bmp[SEA] = barometricPressure.sealevel(bmp[ABS], ALTITUDE);
+            bmp[ABS_HG] = bmp[ABS] * MB2INHG;
+            bmp[SEA_HG] = bmp[SEA] * MB2INHG; 
+        } else Serial.println("[WARN] Could not get pressure.");
+    } else Serial.println("[WARN] Could not start pressure sensor.");
+}
+
+/**
+ * Print barometric pressure
+ * @param  bool absOrSea     
+ * @param   bool mbOrInHg 
+ */
+void printBarometricPressure(bool absOrSea = false, bool mbOrInHg = false) {
+    int index = 0;
+    if (absOrSea)   index++;
+    if (mbOrInHg)   index += 2;
+
+    Serial.print(bmp[index]);
+    if (mbOrInHg)   Serial.print("InHg");
+    else    Serial.print("mb");
 }
 
 /**
@@ -150,7 +156,7 @@ char* getPressureStr(bool absOrSea=false, bool mbOrInHg=false, bool longform=fal
  * @param  bool  longform
  * @return char*
  */
-char* getWindDirectionStr(float heading, bool longform=false) {
+char* getWindDirectionStr(float heading, bool longform = false) {
     char* directions[] = {
         "n", "nne", "ne", "ene", 
         "e", "ese", "se", "sse",
@@ -175,79 +181,80 @@ char* getWindDirectionStr(float heading, bool longform=false) {
 }
 
 /**
- * AS3935 interrupt handler
+ * Print weather station data
  */
-void AS3935_ISR() {
-    AS3935_ISR_Trig = 1;
+void printData() {
+    Serial.print("[");
+    Serial.print((int)tempF);
+    Serial.print("F][Humidity: ");
+    Serial.print(htu.readHumidity());
+    Serial.print("%][Pressure: ");
+    Serial.print(bmp[ABS_HG]);
+    Serial.print("InHg][Wind speed: ");
+    Serial.print(curWindSpeed);
+    Serial.print("mph ");
+    Serial.print(getWindDirectionStr(curWindDirection));
+    Serial.print("][Wind gust: ");
+    Serial.print(curWindGust);
+    Serial.print("mph][Total rainfall: ");
+    Serial.print(rainfall);
+    Serial.print("in]");
 }
 
+/**
+ * Setup
+ */
 void setup() {
     Serial.begin(9600);
     
-    /* Set pins ****************************************************************/
     pinMode(LED, OUTPUT);
     pinMode(CS, OUTPUT);
 
     Serial.println("RaggedPi Project Codename Cloves Initializing...");
     
-    /* Humidity sensor *********************************************************/
-    Serial.print("Initializing humidity sensor...");
-    if (!htu.begin()) {
-        Serial.println("[Fail]");
-    } else  Serial.println("[OK]");
+    htu.begin();
     
-    /* SPI ********************************************************************/
     SPI.begin();
     SPI.setClockDivider(SPI_CLOCK_DIV16);
     SPI.setDataMode(SPI_MODE1);
     SPI.setBitOrder(MSBFIRST);    
     
-    /* AS3935 Lightning Detection *********************************************/
-    Serial.print("Intializing lightning detection...");
     AS3935.AS3935_DefInit();
-    AS3935.AS3935_ManualCal(AS3935_CAPACITANCE, AS3935_IN, AS3935_DIST_EN);
+    AS3935.AS3935_ManualCal(AS3935_CAPACITANCE, AS3935_OUT, AS3935_DIST_EN);
     attachInterrupt(0, AS3935_ISR, RISING);
-    Serial.println("[OK]");
-
-    /* BMP180 Pressure Sensor *************************************************/
-    Serial.print("Initializing barometric pressure sensor...");
-    if (pressure.begin())   Serial.println("[OK]");
-    else    Serial.println("[Fail]");
-
-    /* Weather Station ********************************************************/
-    Serial.print("Initializing Weather Station...");
+    
+    if (!barometricPressure.begin())   Serial.println("[WARN] Barometric pressure sensor failed to start.");
+    
     weatherStation.setWindMode(MODE, SAMPLE_TIME);
     rainfall = 0.0;
-    Serial.println("[OK]");
+    tempC = 0.0;
+    tempF = 0.0;
+    p = 0.0;
 
-    /* Initialized ************************************************************/
     Serial.println("System initialized.");
 }
 
 /**
- * Loop
+ * Loop 
  */
 void loop() {
-    /* Pressure and temperature ************************************************/
-    status = pressure.startTemperature();
-    char* temperature = getTemperatureStr(true, true);
-    char* barometric = getPressureStr(false, false, true);
-    
-    /* Windspeed and rainfall **************************************************/
-    cWindSp = weatherStation.current_wind_speed()/1.6;
-    cGust = weatherStation.get_wind_gust()/1.6;
-    cWindDir = weatherStation.current_wind_direction();
-    rainfall = rainfall + weatherStation.get_current_rain_total()/25.4;    
+    Serial.println("loop.");
+    int x = barometricPressure.startTemperature();
+    readTemperature();
+    readBarometricPressure();
+    curWindSpeed = weatherStation.current_wind_speed()/1.6;
+    curWindGust = weatherStation.get_wind_gust()/1.6;
+    curWindDirection = weatherStation.current_wind_direction();
+    rainfall += weatherStation.get_current_rain_total();
 
-    /* Lightning detection *****************************************************/
     if (AS3935_ISR_Trig) {
         AS3935_ISR_Trig = 0; // reset flag
-        uint8_t src = AS3935.AS3935_GetInterruptSrc(); // get source
-        switch (src) {
+        switch (AS3935.AS3935_GetInterruptSrc()) {
             case 0:
                 Serial.println("[ERROR] AS3935 interrupt source result not expected.");
                 break;
             case 1: {
+                char* msg;
                 uint8_t distance = AS3935.AS3935_GetLightningDistKm();
                 // 1 - near, 63 - distant
                 if (1 == distance)  Serial.println("Lightning overhead!");
@@ -269,27 +276,6 @@ void loop() {
         }        
     }
 
-    /* Output data *************************************************************/
-    sprintf(
-        msg,
-        "[%s][Humidity: %s%%][%s][Windspeed: %dmph %s][Wind gust: %dmph][Rainfall: %d in]",
-        temperature,
-        htu.readHumidity(),
-        barometric,
-        cWindSp,
-        getWindDirectionStr(cWindDir),
-        cGust,
-        rainfall);
-    Serial.println(msg);
+    printData();
     delay(60000);
-    
-    #ifdef LOG
-    logfile.close();
-    #endif
-    
-    #ifdef DEBUG
-    Serial.print("msg: "); Serial.println(msg);
-    Serial.println("Exit loop()");
-    #endif
 }
-    
