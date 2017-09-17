@@ -13,6 +13,8 @@
 #include <PWFusion_AS3935.h>                // Lightning Detection library
 #include <SFE_BMP180.h>                     // Barometric Pressure library
 #include <Time.h>                           // Time library
+#include <Servo.h>                          // Server library
+#include <SolarTracker.h>                   // Solar Tracker library
 
 /* Misc Constants */
 #define SDA 20                              // sda
@@ -32,7 +34,7 @@
 #define RAIN_PIN 2                          // digital pin
 #define RAIN_INT 1                          // int
 #define SAMPLE_TIME 5.0                     // float
-#define MODE SDL_MODE_SAMPLE                //
+#define MODE SDL_MODE_SAMPLE                // sample type
 #define ALTITUDE 145.0                     // Altitude in meters
 #define ALTITUDE_F (_m2ft(ALTITUDE))        // Altitude in feet (m*3.28084)
 // Lightning arrestor
@@ -42,6 +44,17 @@
 #define AS3936_DIST_DIS 0                   //
 #define AS3935_DIST_EN 1                    //
 #define AS3935_CAPACITANCE 104              // on board
+// Solar
+#define BATTERY_PIN A0                      // analog pin
+/* Uncomment below to modify the default settings */
+// #define LDR1 A1                             // analog pin [top left]
+// #define LDR2 A2                             // analog pin [top right]
+// #define LDR3 A3                             // analog pin [bottom left]
+// #define LDR4 A4                             // analog pin [bottom right]
+// #define H_SERVO 9                           // digital pin
+// #define V_SERVO 10                          // digital pin
+// MIN_DEG 0                                   // minimum angle
+// MAX_DEG 180                                 // maximum angle
 
 void AS3935_ISR();
 
@@ -51,9 +64,18 @@ SDL_Weather_80422 weatherStation(
 Adafruit_HTU21DF htu = Adafruit_HTU21DF();
 PWF_AS3935 AS3935(CS, AS3935_PIN, SI);
 SFE_BMP180 barometricPressure;
-
-double tempC, tempF, p, bmp[] = { 0.0, 0.0, 0.0, 0.0 };
-float curWindGust, curWindDirection, curWindSpeed, rainfall;
+SolarTracker solar = SolarTracker();
+;
+int batteryValue;
+double tempC,
+       tempF, 
+       p, 
+       bmp[] = { 0.0, 0.0, 0.0, 0.0 };
+float curWindGust, 
+      curWindDirection, 
+      curWindSpeed, 
+      rainfall, 
+      batteryVoltage;
 volatile int AS3935_ISR_Trig = 0;
 
 /**
@@ -181,10 +203,29 @@ char* getWindDirectionStr(float heading, bool longform = false) {
 }
 
 /**
+ * Read battery level
+ */
+void readBatteryData() {
+    batteryValue = analogRead(BATTERY_PIN);
+    batteryVoltage = (float(batteryValue)*5)/1023*2;
+}
+
+/**
+ * Print battery value or voltage
+ * @param  {Boolean} bool default: true (voltage)
+ */
+void printBatteryData(bool voltage=false) {
+    if (!voltage)    Serial.print(batteryValue);
+    else    Serial.print(batteryVoltage);
+}
+
+/*
  * Print weather station data
  */
 void printData() {
-    Serial.print("[");
+    Serial.print("[Bat: ");
+    printBatteryData();
+    Serial.print("V][");
     Serial.print((int)tempF);
     Serial.print("F][Humidity: ");
     Serial.print(htu.readHumidity());
@@ -214,6 +255,8 @@ void setup() {
     
     htu.begin();
     
+    solar.begin();
+
     SPI.begin();
     SPI.setClockDivider(SPI_CLOCK_DIV16);
     SPI.setDataMode(SPI_MODE1);
@@ -275,6 +318,8 @@ void loop() {
                 break;
         }        
     }
+
+    solar.calculatePosition(true);
 
     printData();
     delay(60000);
