@@ -5,6 +5,7 @@
 */
 /* Includes */
 #include <SoftwareSerial.h>                 // Serial library
+#include <XBee.h>
 #include <Wire.h>                           // One Wire library
 #include <SDL_Weather_80422.h>              // Weather Station library
 #include <Adafruit_ADS1015.h>               // 
@@ -32,8 +33,8 @@
 #define RAIN_PIN 2                          // digital pin
 #define RAIN_INT 1                          // int
 #define SAMPLE_TIME 5.0                     // float
-#define MODE SDL_MODE_SAMPLE                //
-#define ALTITUDE 145.0                     // Altitude in meters
+#define MODE SDL_MODE_SAMPLE                // sample mode
+#define ALTITUDE 145.0                      // Altitude in meters
 #define ALTITUDE_F (_m2ft(ALTITUDE))        // Altitude in feet (m*3.28084)
 // Lightning arrestor
 #define AS3935_PIN 2                        // analog pin AS3935 IRQ
@@ -42,8 +43,22 @@
 #define AS3936_DIST_DIS 0                   //
 #define AS3935_DIST_EN 1                    //
 #define AS3935_CAPACITANCE 104              // on board
+// Xbee2
+#define XBEE2_ADDY1 0x0013a200
+#define XBEE2_ADDY2 0x40682fa2
+#define SPACE Serial.print(' ')
 
 void AS3935_ISR();
+
+double tempC, 
+       tempF, 
+       p, 
+       bmp[] = { 0.0, 0.0, 0.0, 0.0 };
+float curWindGust, curWindDirection, curWindSpeed, rainfall;
+volatile int AS3935_ISR_Trig = 0;
+uint8_t payload[] = {0};
+unsigned long time = 0;
+unsigned long lastRead = 0;
 
 SDL_Weather_80422 weatherStation(
     ANEM_PIN, RAIN_PIN, ANEM_INT, RAIN_INT, A0, SDL_MODE_INTERNAL_AD
@@ -51,10 +66,10 @@ SDL_Weather_80422 weatherStation(
 Adafruit_HTU21DF htu = Adafruit_HTU21DF();
 PWF_AS3935 AS3935(CS, AS3935_PIN, SI);
 SFE_BMP180 barometricPressure;
-
-double tempC, tempF, p, bmp[] = { 0.0, 0.0, 0.0, 0.0 };
-float curWindGust, curWindDirection, curWindSpeed, rainfall;
-volatile int AS3935_ISR_Trig = 0;
+XBee xbee = XBee();
+XBeeAddress64 addr64 = XBeeAddress64(XBEE2_ADDY1, XBEE2_ADDY2);
+ZBTxRequest zbTx = ZBTxRequest(addr64, payload, sizeof(payload));
+ZBTxStatusResponse txStatus = ZBTxStatusResponse();
 
 /**
  * Meters to feet conversiuon
@@ -202,10 +217,73 @@ void printData() {
 }
 
 /**
+ * Print XBEE packet
+ * @param  {[type]} SimpleZigBeePacket &             p [description]
+ */
+// void printPacket(SimpleZigBeePacket & p){
+//     Serial.print( START, HEX );
+//     SPACE;
+//     Serial.print( p.getLengthMSB(), HEX );
+//     SPACE;
+//     Serial.print( p.getLengthLSB(), HEX );
+//     SPACE;
+//     uint8_t checksum = 0;
+//     for( int i=0; i<p.getFrameLength(); i++){
+//       Serial.print( p.getFrameData(i), HEX );
+//       SPACE;
+//       checksum += p.getFrameData(i); 
+//     }
+//     checksum = 0xff - checksum;
+//     Serial.print(checksum, HEX );
+//     Serial.println();
+// }
+
+/**
+ * Send XBEE data
+ */
+void sendData() {
+    float h = htu.readHumidity();
+    payload[0] = (uint8_t)tempF >> 8 & 0xff;
+    payload[1] = (uint8_t)tempF & 0xff;
+    payload[2] = (uint8_t)h >> 8 & 0xff;
+    payload[3] = (uint8_t)h & 0xff;
+    payload[4] = (uint8_t)bmp[ABS_HG] >> 8 & 0xff;
+    payload[5] = (uint8_t)bmp[ABS_HG] & 0xff;
+    payload[6] = (uint8_t)curWindSpeed >> 8 & 0xff;
+    payload[7] = (uint8_t)curWindSpeed & 0xff;
+    payload[8] = (uint8_t)curWindDirection >> 8 & 0xff;
+    payload[9] = (uint8_t)curWindDirection & 0xff;
+    payload[10] = (uint8_t)curWindGust >> 8 & 0xff;
+    payload[11] = (uint8_t)curWindGust & 0xff;
+    payload[12] = (uint8_t)rainfall >> 8 & 0xff;
+    payload[13] = (uint8_t)rainfall & 0xff; 
+
+    xbee.send(zbTx);
+    Serial.print("\nSend: ");
+//    printPacket(xbee.getOutgoingPacketObject());
+
+    if (xbee.readPacket(500)) {
+        if (xbee.getResponse().getApiId() == ZB_TX_STATUS_RESPONSE) {
+            xbee.getResponse().getZBTxStatusResponse(txStatus);
+            if (txStatus.getDeliveryStatus() == SUCCESS) {
+                // yay!
+            } else {
+                // boo.
+            }
+        }
+    } else if (xbee.getResponse().isError()) {
+        // error...error...error...
+    } else {
+        // ...?
+    }
+}
+
+/**
  * Setup
  */
 void setup() {
     Serial.begin(9600);
+    xbee.setSerial(Serial);
     
     pinMode(LED, OUTPUT);
     pinMode(CS, OUTPUT);
@@ -238,44 +316,47 @@ void setup() {
  * Loop 
  */
 void loop() {
-    Serial.println("loop.");
-    int x = barometricPressure.startTemperature();
-    readTemperature();
-    readBarometricPressure();
-    curWindSpeed = weatherStation.current_wind_speed()/1.6;
-    curWindGust = weatherStation.get_wind_gust()/1.6;
-    curWindDirection = weatherStation.current_wind_direction();
-    rainfall += weatherStation.get_current_rain_total();
+    time - millis();
+    if (time > (lastRead+60000)) {
+        lastRead = time;
+        int x = barometricPressure.startTemperature();
+        readTemperature();
+        readBarometricPressure();
+        curWindSpeed = weatherStation.current_wind_speed()/1.6;
+        curWindGust = weatherStation.get_wind_gust()/1.6;
+        curWindDirection = weatherStation.current_wind_direction();
+        rainfall += weatherStation.get_current_rain_total();
 
-    if (AS3935_ISR_Trig) {
-        AS3935_ISR_Trig = 0; // reset flag
-        switch (AS3935.AS3935_GetInterruptSrc()) {
-            case 0:
-                Serial.println("[ERROR] AS3935 interrupt source result not expected.");
-                break;
-            case 1: {
-                char* msg;
-                uint8_t distance = AS3935.AS3935_GetLightningDistKm();
-                // 1 - near, 63 - distant
-                if (1 == distance)  Serial.println("Lightning overhead!");
-                else if (63 == distance)    Serial.println("Out of range lightning detected.");
-                else if (63 > distance && 1 < distance) {
-                    sprintf(msg, "Lightning detected! (%dkm)", distance);
-                    Serial.println(msg);
+        if (AS3935_ISR_Trig) {
+            AS3935_ISR_Trig = 0; // reset flag
+            switch (AS3935.AS3935_GetInterruptSrc()) {
+                case 0:
+                    Serial.println("[ERROR] AS3935 interrupt source result not expected.");
+                    break;
+                case 1: {
+                    char* msg;
+                    uint8_t distance = AS3935.AS3935_GetLightningDistKm();
+                    // 1 - near, 63 - distant
+                    if (1 == distance)  Serial.println("Lightning overhead!");
+                    else if (63 == distance)    Serial.println("Out of range lightning detected.");
+                    else if (63 > distance && 1 < distance) {
+                        sprintf(msg, "Lightning detected! (%dkm)", distance);
+                        Serial.println(msg);
+                    }
+                    break;
                 }
-                break;
-            }
-            case 2:
-                Serial.println("[ERROR] AS3935 Disturber detected");
-                break;
-            case 3:
-                Serial.println("[ERROR] AS3935 Noise level too high.");
-                break;    
-            default:
-                break;
-        }        
-    }
+                case 2:
+                    Serial.println("[ERROR] AS3935 Disturber detected");
+                    break;
+                case 3:
+                    Serial.println("[ERROR] AS3935 Noise level too high.");
+                    break;    
+                default:
+                    break;
+            }        
+        }
 
-    printData();
-    delay(60000);
+        printData();
+        sendData();
+    }
 }
