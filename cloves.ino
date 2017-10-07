@@ -5,16 +5,20 @@
 */
 /* Includes */
 #include <SoftwareSerial.h>                 // Serial library
-#include <XBee.h>
+#include <XBee.h>                           // XBee library
 #include <Wire.h>                           // One Wire library
 #include <SDL_Weather_80422.h>              // Weather Station library
-#include <Adafruit_ADS1015.h>               // 
+#include <Adafruit_ADS1015.h>               // library
 #include <Adafruit_HTU21DF.h>               // Humidity library
 #include <SPI.h>                            // SPI library
 #include <PWFusion_AS3935.h>                // Lightning Detection library
 #include <SFE_BMP180.h>                     // Barometric Pressure library
 #include <Time.h>                           // Time library
 
+/* Output Settings */
+#define SERIAL                              // Uncomment for serial output
+#define XBEE                                // Uncomment for xbee2 output
+//#define DEBUG                               // Uncomment for debug output
 /* Misc Constants */
 #define SDA 20                              // sda
 #define SDL 21                              // sdl
@@ -22,11 +26,11 @@
 #define LED 13                              // led pin
 #define SI 4                                // select input
 // Barometric pressure
-#define ABS 0
-#define SEA 1
-#define ABS_HG 2
-#define SEA_HG 3
-#define MB2INHG 0.0295333727
+#define ABS 0                               // delimiter
+#define SEA 1                               // delimiter
+#define ABS_HG 2                            // delimiter
+#define SEA_HG 3                            // delimiter
+#define MB2INHG 0.0295333727                // conversion factor
 // Weatherstation
 #define ANEM_PIN 18                         // digital pin
 #define ANEM_INT 5                          // int                 
@@ -38,18 +42,20 @@
 #define ALTITUDE_F (_m2ft(ALTITUDE))        // Altitude in feet (m*3.28084)
 // Lightning arrestor
 #define AS3935_PIN 2                        // analog pin AS3935 IRQ
-#define AS3935_IN 0                         //
-#define AS3935_OUT 1                        //
-#define AS3936_DIST_DIS 0                   //
-#define AS3935_DIST_EN 1                    //
+#define AS3935_IN 0                         // delimiter
+#define AS3935_OUT 1                        // delimiter
+#define AS3936_DIST_DIS 0                   // delimiter
+#define AS3935_DIST_EN 1                    // delimiter
 #define AS3935_CAPACITANCE 104              // on board
 // Xbee2
-#define XBEE2_ADDY1 0x0013a200
-#define XBEE2_ADDY2 0x40682fa2
-#define SPACE Serial.print(' ')
+#define XBEE2_ADDY1 0x0013a200              // hex
+#define XBEE2_ADDY2 0x40682fa2              // hex
+#define SPACE Serial.print(' ')             // macro
 
+/* Interruptors */
 void AS3935_ISR();
 
+/* Variables */
 double tempC, 
        tempF, 
        p, 
@@ -60,6 +66,7 @@ uint8_t payload[] = {0};
 unsigned long time = 0;
 unsigned long lastRead = 0;
 
+/* Objects */
 SDL_Weather_80422 weatherStation(
     ANEM_PIN, RAIN_PIN, ANEM_INT, RAIN_INT, A0, SDL_MODE_INTERNAL_AD
 );
@@ -71,6 +78,7 @@ XBeeAddress64 addr64 = XBeeAddress64(XBEE2_ADDY1, XBEE2_ADDY2);
 ZBTxRequest zbTx = ZBTxRequest(addr64, payload, sizeof(payload));
 ZBTxStatusResponse txStatus = ZBTxStatusResponse();
 
+/* Utility Methods */
 /**
  * Meters to feet conversiuon
  * @param int meters
@@ -190,9 +198,10 @@ char* getWindDirectionStr(float heading, bool longform = false) {
         "northwest", "north northwest",
         "north"
     };
-    int index = round((round(heading) % 360) / 22.5)+1;
-    if (longform)   return directions_long[index];
-    return directions[index];
+    int i = round(heading);
+    i = (round(i % 360) / 22.5)+1;
+    if (longform)   return directions_long[i];
+    return directions[i];
 }
 
 /**
@@ -259,7 +268,7 @@ void sendData() {
     payload[13] = (uint8_t)rainfall & 0xff; 
 
     xbee.send(zbTx);
-    Serial.print("\nSend: ");
+//    Serial.print("\nSend: ");
 //    printPacket(xbee.getOutgoingPacketObject());
 
     if (xbee.readPacket(500)) {
