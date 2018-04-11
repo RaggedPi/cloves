@@ -14,14 +14,14 @@
 #include <PWFusion_AS3935.h>                // Lightning Detection library
 #include <SFE_BMP180.h>                     // Barometric Pressure library
 #include <Time.h>                           // Time library
-#include <Servo.h>                          // Server library
-#include <SolarTracker.h>                   // Solar Tracker library
 
 /* Output Settings */
-#define SERIAL                              // uncomment for serial output
+//#define SERIAL                              // uncomment for serial output
 #define XBEE                                // uncomment for xbee2 output
 //#define DEBUG                               // uncomment for debug output
-/* Misc Constants */
+
+/* Constants */
+// Misc
 #define SDA 20                              // sda
 #define SDL 21                              // sdl
 #define CS 53                               // chipselect
@@ -29,17 +29,15 @@
 #define SI 4                                // select input
 #define C 0                                 // delimiter
 #define F 1                                 // delimiter
-// Macros
-#define SPACE Serial.print(' ');            // macro
-#define START Serial.print('[');            // macro
-#define STOP Serial.print(']');             // macro
+#define CURRENT 0                           // delimiter
+#define PREVIOUS 1                          // delimiter
 // Barometric pressure
 #define ABS 0                               // delimiter
 #define SEA 1                               // delimiter
 #define ABS_HG 2                            // delimiter
 #define SEA_HG 3                            // delimiter
-#define MB2INHG 0.0295333727                // conversion factor
-// Weatherstation
+#define MB_TO_INHG 0.0295333727             // conversion factor
+    // Weatherstation
 #define ANEM_PIN 18                         // digital pin
 #define ANEM_INT 5                          // int                 
 #define RAIN_PIN 2                          // digital pin
@@ -58,48 +56,41 @@
 // Xbee2
 #define XB_ADDR1 0x0013a200                 // hex
 #define XB_ADDR2 0x40682fa2                 // hex
-// Solar
+// Battery
 #define BATTERY_PIN A0                      // analog pin
 #define READ_TIME 60000                     // ms
-/* Uncomment below to modify the default settings */
-//#define LDR1 A1                             // analog pin [top left]
-//#define LDR2 A2                             // analog pin [top right]
-//#define LDR3 A3                             // analog pin [bottom left]
-//#define LDR4 A4                             // analog pin [bottom right]
-//#define H_SERVO 9                           // digital pin
-//#define V_SERVO 10                          // digital pin
-//MIN_DEG 0                                   // minimum angle
-//MAX_DEG 180                                 // maximum angle
 
 /* Interruptors */
-void AS3935_ISR();
+void AS3935_ISR();                          // lightning arrestor
 
 /* Variables */
-double tempC, 
-       tempF, 
-       p, 
-       bmp[] = { 0.0, 0.0, 0.0, 0.0 };
-float curWindGust, curWindDirection, curWindSpeed, rainfall;
-volatile int AS3935_ISR_Trig = 0;
-uint8_t payload[] = {0};
-unsigned long time = 0;
-unsigned long lastRead = 0;
+double cTemp = 0.0;                         // current temperature
+double hTemp = 0.0;                         // high temperature
+double lTemp = 0.0;                         // low temperature
+double bmp[] = { 0.0, 0.0, 0.0, 0.0 };      // barometric pressure
+float windGust[2] = { 0.0, 0.0 };            // weather station
+float windGustDirection[2] = { 0.0, 0.0 };  // weather station
+float windDirection[2] = { 0.0, 0.0 };      // weather station
+float windSpeed[2] = { 0.0 };               // weather station
+float rainfall = 0.0;                       // weather station
+float batVoltage;                           // battery
+volatile int AS3935_ISR_Trig = 0;           // lightning arrestor
+uint8_t payload[] = {0};                    // xbee
+unsigned long lastReadTime = 0;                 // misc
 
 /* Objects */
 SDL_Weather_80422 weatherStation(
     ANEM_PIN, RAIN_PIN, ANEM_INT, RAIN_INT, A0, SDL_MODE_INTERNAL_AD
-);
-Adafruit_HTU21DF htu = Adafruit_HTU21DF();
-PWF_AS3935 AS3935(CS, AS3935_PIN, SI);
-SFE_BMP180 barometricPressure;
-XBee xbee = XBee();
-XBeeAddress64 addr64 = XBeeAddress64(XB_ADDR1, XB_ADDR2);
-ZBTxRequest zbTx = ZBTxRequest(addr64, payload, sizeof(payload));
-ZBTxStatusResponse txStatus = ZBTxStatusResponse();
-SolarTracker solar = SolarTracker();
+);                                          // weather station
+Adafruit_HTU21DF htu = Adafruit_HTU21DF();  // humidity sensor
+PWF_AS3935 AS3935(CS, AS3935_PIN, SI);      // lightning arrestor
+SFE_BMP180 barometricPressure;              // barometric pressure
+XBee xbee = XBee();                         // xbee
+XBeeAddress64 addr64 = XBeeAddress64(XB_ADDR1, XB_ADDR2); // xbee address
+ZBTxRequest zbTx = ZBTxRequest(addr64, payload, sizeof(payload)); // xbee request
+ZBTxStatusResponse txStatus = ZBTxStatusResponse(); // xbee response
 
 /* Utility Methods */
-
 /**
  * Meters to feet conversiuon
  * @param int meters
@@ -129,121 +120,12 @@ int _km2mi(int km) {
 }
 
 /**
- * AS3935 interrupt handler
+ * Celsius to Fahrenheit
+ * @param  float celsius
+ * @return float
  */
-void AS3935_ISR() {
-    AS3935_ISR_Trig = 1;
-}
-
-/**
- * Read temperature
- */
-void readTemperature() {
-    if (0 != barometricPressure.startTemperature()) {
-        delay(5);
-        if (0 != barometricPressure.getTemperature(tempC)) {
-            tempF = ((9.0/5.0)*tempC)+32.0;
-        } else Serial.println("[WARN] Could not read temperature");
-    } else Serial.println("[WARN] Could not start temperature sensor.");
-}
-
-/**
- * Print temperature
- * @param  int cf_c_f 0: both (default), 1: celsius, 2: fahrenheit
- */
-void printTemperature(int cf_c_f = 0) {
-    if (0 == cf_c_f || 1 == cf_c_f) {
-        Serial.print((int)tempC);
-        Serial.print("C ");
-    }
-    if (0 == cf_c_f || 2 == cf_c_f) {
-        Serial.print((int)tempF);
-        Serial.print("F ");
-    }
-}
-
-/**
- * Read barometric pressure
- */
-void readBarometricPressure() {
-    int p;
-    if(0 == tempC)  p = barometricPressure.getTemperature(tempC);
-    p = barometricPressure.startPressure(3); // [0-3] resolution, return ms read time
-    if (0 != p) {
-        delay(p);
-        if (0 != barometricPressure.getPressure(bmp[ABS], tempC)) {
-            bmp[SEA] = barometricPressure.sealevel(bmp[ABS], ALTITUDE);
-            bmp[ABS_HG] = bmp[ABS] * MB2INHG;
-            bmp[SEA_HG] = bmp[SEA] * MB2INHG; 
-        } else Serial.println("[WARN] Could not get pressure.");
-    } else Serial.println("[WARN] Could not start pressure sensor.");
-}
-
-/**
- * Print barometric pressure
- * @param  bool absOrSea     
- * @param   bool mbOrInHg 
- */
-void printBarometricPressure(bool absOrSea = false, bool mbOrInHg = false) {
-    int index = 0;
-    if (absOrSea)   index++;
-    if (mbOrInHg)   index += 2;
-
-    Serial.print(bmp[index]);
-    if (mbOrInHg)   Serial.print("InHg");
-    else    Serial.print("mb");
-}
-
-/**
- * Get wind direction string
- * @param  float heading
- * @param  bool  longform
- * @return char*
- */
-char* getWindDirectionStr(float heading, bool longform = false) {
-    char* directions[] = {
-        "n", "nne", "ne", "ene", 
-        "e", "ese", "se", "sse",
-        "s", "ssw", "sw", "wsw",
-        "w", "wnw", "nw", "nnw",
-        "n"
-    }; 
-    char* directions_long[] = {
-        "north", "north northeast",
-        "northeast", "east northeast",
-        "east", "east southeast",
-        "southeast", "south southeast",
-        "south", "south southwest",
-        "southwest", "west southwest",
-        "west", "west northwest",
-        "northwest", "north northwest",
-        "north"
-    };
-    int i = round(heading);
-    i = (round(i % 360) / 22.5)+1;
-    if (longform)   return directions_long[i];
-    return directions[i];
-}
-
-/**
- * Print weather station data
- */
-void printData() {
-    Serial.print("[");
-    Serial.print((int)tempF);
-    Serial.print("F][Humidity: ");
-    Serial.print(htu.readHumidity());
-    Serial.print("%][Pressure: ");
-    Serial.print(bmp[ABS_HG]);
-    Serial.print("InHg][Wind speed: ");
-    Serial.print(curWindSpeed);
-    Serial.print("mph ");
-    Serial.print(getWindDirectionStr(curWindDirection));
-    Serial.print("][Wind gust: ");
-    Serial.print(curWindGust);
-    Serial.print("mph][Total rainfall: ");
-    Serial.print(rainfall);
-    Serial.print("in]");
+float _c2f(float celsius) {
+    return ((9.0/5.0)*celsius)+32.0;
 }
 
 /**
@@ -256,18 +138,18 @@ void buildData(uint8_t distance=0) {
     if (0 == distance) {
         float h = htu.readHumidity();
         payload[0] = 0 & 0xff;
-        payload[1] = (uint8_t)tempF >> 8 & 0xff;
-        payload[2] = (uint8_t)tempF & 0xff;
+        payload[1] = (uint8_t)_c2f(cTemp) >> 8 & 0xff;
+        payload[2] = (uint8_t)_c2f(cTemp) & 0xff;
         payload[3] = (uint8_t)h >> 8 & 0xff;
         payload[4] = (uint8_t)h & 0xff;
         payload[5] = (uint8_t)bmp[ABS_HG] >> 8 & 0xff;
         payload[6] = (uint8_t)bmp[ABS_HG] & 0xff;
-        payload[7] = (uint8_t)curWindSpeed >> 8 & 0xff;
-        payload[8] = (uint8_t)curWindSpeed & 0xff;
-        payload[9] = (uint8_t)curWindDirection >> 8 & 0xff;
-        payload[10] = (uint8_t)curWindDirection & 0xff;
-        payload[11] = (uint8_t)curWindGust >> 8 & 0xff;
-        payload[12] = (uint8_t)curWindGust & 0xff;
+        payload[7] = (uint8_t)windSpeed[CURRENT] >> 8 & 0xff;
+        payload[8] = (uint8_t)windSpeed[CURRENT] & 0xff;
+        payload[9] = (uint8_t)windDirection[CURRENT] >> 8 & 0xff;
+        payload[10] = (uint8_t)windDirection[CURRENT] & 0xff;
+        payload[11] = (uint8_t)windGust[CURRENT] >> 8 & 0xff;
+        payload[12] = (uint8_t)windGust[CURRENT] & 0xff;
         payload[13] = (uint8_t)rainfall >> 8 & 0xff;
         payload[14] = (uint8_t)rainfall & 0xff; 
     } else {
@@ -298,6 +180,37 @@ void sendData() {
 }
 
 /**
+ * Get wind direction string
+ * @param  float heading
+ * @param  bool  longform
+ * @return char*
+ */
+String getWindDirectionStr(float heading, bool longform = false) {
+    String directions[] = {
+        "n", "nne", "ne", "ene", 
+        "e", "ese", "se", "sse",
+        "s", "ssw", "sw", "wsw",
+        "w", "wnw", "nw", "nnw",
+        "n"
+    }; 
+    String directions_long[] = {
+        "north", "north northeast",
+        "northeast", "east northeast",
+        "east", "east southeast",
+        "southeast", "south southeast",
+        "south", "south southwest",
+        "southwest", "west southwest",
+        "west", "west northwest",
+        "northwest", "north northwest",
+        "north"
+    };
+    int i = round(heading);
+    i = (round(i % 360) / 22.5)+1;
+    if (longform)   return directions_long[i];
+    return directions[i];
+}
+
+/**
  * AS3935 interrupt handler
  */
 void doAS3935() {
@@ -306,10 +219,12 @@ void doAS3935() {
 
     switch (AS3935.AS3935_GetInterruptSrc()) {
         case 0:
+            #ifdef SERIAL
             Serial.println("[ERROR] AS3935 interrupt source result not expected.");
+            #endif
             break;
         case 1: {
-            char* msg;
+            String msg;
             uint8_t distance = AS3935.AS3935_GetLightningDistKm();
             // 1 - near, 63 - distant
             if (1 == distance) {
@@ -324,12 +239,15 @@ void doAS3935() {
             }
             else if (63 > distance && 1 < distance) {
                 #ifdef SERIAL
-                sprintf(msg, "Lightning detected! (%dkm)", distance);
-                Serial.println(msg);
+                Serial.print("Lightning detected! (");
+                Serial.print(distance);
+                Serial.println("km)");
                 #endif
             }
+            #ifdef XBEE
             buildData(distance);
-            sendData();  
+            sendData();
+            #endif  
             break;
         }
         case 2:
@@ -344,13 +262,81 @@ void doAS3935() {
 }
 
 /**
+ * AS3935 interrupt handler
+ */
+void AS3935_ISR() {
+    AS3935_ISR_Trig = 1;
+}
+
+/* Read Methods */
+/**
+ * Read anemometer
+ */
+void readAnemometer() {
+    windSpeed[CURRENT] = weatherStation.current_wind_speed()/1.6;
+    windDirection[CURRENT] = weatherStation.current_wind_direction();
+    
+    windGust[CURRENT] = weatherStation.get_wind_gust()/1.6;
+    windGustDirection[CURRENT] = windDirection[CURRENT];
+
+    if (windSpeed[CURRENT] > windSpeed[PREVIOUS]) {
+        windSpeed[PREVIOUS] = windSpeed[CURRENT];
+        windDirection[PREVIOUS] = windDirection[CURRENT];
+    }
+
+    if (windGust[CURRENT] > windGust[PREVIOUS]) {
+        windGust[PREVIOUS] = windGust[CURRENT];
+        windGustDirection[PREVIOUS] = windGustDirection[CURRENT];
+    }    
+}
+/**
+ * Read temperature
+ */
+void readTemperature() {
+    if (0 != barometricPressure.startTemperature()) {
+        delay(5);
+        if (0 == barometricPressure.getTemperature(cTemp))
+            Serial.println("[WARN] Could not read temperature");
+    } else Serial.println("[WARN] Could not start temperature sensor.");
+}
+
+/**
+ * Read barometric pressure
+ */
+void readBarometricPressure() {
+    int p;
+    if(0 == cTemp)  p = barometricPressure.getTemperature(cTemp);
+    p = barometricPressure.startPressure(3); // [0-3] resolution, return ms read time
+    if (0 != p) {
+        delay(p);
+        if (0 != barometricPressure.getPressure(bmp[ABS], cTemp)) {
+            bmp[SEA] = barometricPressure.sealevel(bmp[ABS], ALTITUDE);
+            bmp[ABS_HG] = bmp[ABS] * MB_TO_INHG;
+            bmp[SEA_HG] = bmp[SEA] * MB_TO_INHG; 
+        } else Serial.println("[WARN] Could not get pressure.");
+    } else Serial.println("[WARN] Could not start pressure sensor.");
+}
+
+/**
+ * Read battery voltage
+ */
+void readBatteryVoltage() {
+    int v = analogRead(BATTERY_PIN);
+
+    batVoltage = (float(v)*5)/1023*2;
+}
+
+/* Core Methods */
+/**
  * Setup
  */
 void setup() {
-    // Start serial objects
+    // Start serial objects    
     Serial.begin(9600);
+    #ifdef XBEE 
     xbee.setSerial(Serial);
-    
+    #endif 
+
     // Set pin modes
     pinMode(LED, OUTPUT);
     pinMode(CS, OUTPUT);
@@ -378,47 +364,31 @@ void setup() {
     // Configure weatherstation settings
     weatherStation.setWindMode(MODE, SAMPLE_TIME);
 
-    // Start solar tracker
-    solar.begin();
-
-    // Set intial totals
+    // Set intial values
     rainfall = 0.0;
-    tempC = 0.0;
-    tempF = 0.0;
-    p = 0.0;
-    time = millis();
-
-    // Initialized
-    Serial.println("System initialized.");
 }
 
 /**
  * Loop 
  */
 void loop() {
+
     // Check read time
-    int timer = time - millis();
-    if (timer > (lastRead + READ_TIME)) {
-        // Set current read time
-        lastRead = time;
-        // 
-        timer = barometricPressure.startTemperature();
+    if (millis - lastReadTime <= READ_TIME) {
+        int timer = barometricPressure.startTemperature();
+        
         readTemperature();
         readBarometricPressure();
-        curWindSpeed = weatherStation.current_wind_speed()/1.6;
-        curWindGust = weatherStation.get_wind_gust()/1.6;
-        curWindDirection = weatherStation.current_wind_direction();
+        readAnemometer();
+        
         rainfall += weatherStation.get_current_rain_total();
 
         if (AS3935_ISR_Trig)    doAS3935();         
 
-        #ifdef SERIAL
-        printData();
-        #endif
         #ifdef XBEE
         buildData(0); 
         sendData();
         #endif
-        solar.calculatePosition(true);
+        lastReadTime = millis();        
     }
 }
