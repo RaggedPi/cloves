@@ -5,7 +5,8 @@
 */
 /* Includes */
 #include <SoftwareSerial.h>                 // Serial library
-#include <XBee.h>                           // XBee library
+#include <ThingSpeak.h>                     // ThingSpeak library
+#include <WiFi101.h>                        // WiFi library
 #include <Wire.h>                           // One Wire library
 #include <SDL_Weather_80422.h>              // Weather Station library
 #include <Adafruit_ADS1015.h>               // library
@@ -14,11 +15,6 @@
 #include <PWFusion_AS3935.h>                // Lightning Detection library
 #include <SFE_BMP180.h>                     // Barometric Pressure library
 #include <Time.h>                           // Time library
-
-/* Output Settings */
-//#define SERIAL                              // uncomment for serial output
-#define XBEE                                // uncomment for xbee2 output
-//#define DEBUG                               // uncomment for debug output
 
 /* Constants */
 // Misc
@@ -76,7 +72,9 @@ float rainfall = 0.0;                       // weather station
 float batVoltage;                           // battery
 volatile int AS3935_ISR_Trig = 0;           // lightning arrestor
 uint8_t payload[] = {0};                    // xbee
-unsigned long lastReadTime = 0;                 // misc
+unsigned long lastReadTime = 0;             // misc
+unsigned long channelId = 559277;           // ThingSpeak channel id
+const char * apiKey = "MQ6D6FCU467QKP04";   // ThingSpeak api key
 
 /* Objects */
 SDL_Weather_80422 weatherStation(
@@ -85,10 +83,38 @@ SDL_Weather_80422 weatherStation(
 Adafruit_HTU21DF htu = Adafruit_HTU21DF();  // humidity sensor
 PWF_AS3935 AS3935(CS, AS3935_PIN, SI);      // lightning arrestor
 SFE_BMP180 barometricPressure;              // barometric pressure
-XBee xbee = XBee();                         // xbee
-XBeeAddress64 addr64 = XBeeAddress64(XB_ADDR1, XB_ADDR2); // xbee address
-ZBTxRequest zbTx = ZBTxRequest(addr64, payload, sizeof(payload)); // xbee request
-ZBTxStatusResponse txStatus = ZBTxStatusResponse(); // xbee response
+
+#define USE_WIFI101_SHIELD
+//#define USE_ETHERNET_SHIELD
+
+#if defined(ARDUINO_ARCH_ESP8266) || defined(ARDUINO_ARCH_ESP32)
+    #error "EPS8266 and ESP32 are not compatible with this example."
+#endif
+
+#if !defined(USE_WIFI101_SHIELD) && !defined(USE_ETHERNET_SHIELD) && !defined(ARDUINO_SAMD_MKR1000) && !defined(ARDUINO_AVR_YUN) 
+  #error "Uncomment the #define for either USE_WIFI101_SHIELD or USE_ETHERNET_SHIELD"
+#endif
+
+#if defined(ARDUINO_AVR_YUN)
+    #include "YunClient.h"
+    YunClient client;
+#else
+  #if defined(USE_WIFI101_SHIELD) || defined(ARDUINO_SAMD_MKR1000)
+    // Use WiFi
+    #include <SPI.h>
+    #include <WiFi101.h>
+    char ssid[] = "RaggedJack";  
+    char pass[] = "g4t0rade";  
+    int status = WL_IDLE_STATUS;
+    WiFiClient  client;
+  #elif defined(USE_ETHERNET_SHIELD)
+    // Use wired ethernet shield
+    #include <SPI.h>
+    #include <Ethernet.h>
+    byte mac[] = { 0xDE, 0xAD, 0xBE, 0xEF, 0xFE, 0xED};
+    EthernetClient client;
+  #endif
+#endif
 
 /* Utility Methods */
 /**
@@ -126,57 +152,6 @@ int _km2mi(int km) {
  */
 float _c2f(float celsius) {
     return ((9.0/5.0)*celsius)+32.0;
-}
-
-/**
- * Build data payload
- * @param  uint8_t distance distance of a lightning strike 
- *                          else weather payload data
- 
- */
-void buildData(uint8_t distance=0) {
-    if (0 == distance) {
-        float h = htu.readHumidity();
-        payload[0] = 0 & 0xff;
-        payload[1] = (uint8_t)_c2f(cTemp) >> 8 & 0xff;
-        payload[2] = (uint8_t)_c2f(cTemp) & 0xff;
-        payload[3] = (uint8_t)h >> 8 & 0xff;
-        payload[4] = (uint8_t)h & 0xff;
-        payload[5] = (uint8_t)bmp[ABS_HG] >> 8 & 0xff;
-        payload[6] = (uint8_t)bmp[ABS_HG] & 0xff;
-        payload[7] = (uint8_t)windSpeed[CURRENT] >> 8 & 0xff;
-        payload[8] = (uint8_t)windSpeed[CURRENT] & 0xff;
-        payload[9] = (uint8_t)windDirection[CURRENT] >> 8 & 0xff;
-        payload[10] = (uint8_t)windDirection[CURRENT] & 0xff;
-        payload[11] = (uint8_t)windGust[CURRENT] >> 8 & 0xff;
-        payload[12] = (uint8_t)windGust[CURRENT] & 0xff;
-        payload[13] = (uint8_t)rainfall >> 8 & 0xff;
-        payload[14] = (uint8_t)rainfall & 0xff; 
-    } else {
-        payload[0] = 1 & 0xff;
-        payload[1] = distance & 0xff;
-    }
-}
-
-/**
- * Send XBEE data
- */
-void sendData() {
-    xbee.send(zbTx);
-    if (xbee.readPacket(500)) {
-        if (xbee.getResponse().getApiId() == ZB_TX_STATUS_RESPONSE) {
-            xbee.getResponse().getZBTxStatusResponse(txStatus);
-            if (txStatus.getDeliveryStatus() == SUCCESS) {
-                // yay!
-            } else {
-                // boo.
-            }
-        }
-    } else if (xbee.getResponse().isError()) {
-        // error...error...error...
-    } else {
-        // ...?
-    }
 }
 
 /**
@@ -321,9 +296,7 @@ void readBarometricPressure() {
  * Read battery voltage
  */
 void readBatteryVoltage() {
-    int v = analogRead(BATTERY_PIN);
-
-    batVoltage = (float(v)*5)/1023*2;
+    cd skipbatVoltage = (float(analogRead(BATTERY_PIN))*5)/1023*2;
 }
 
 /* Core Methods */
@@ -332,10 +305,7 @@ void readBatteryVoltage() {
  */
 void setup() {
     // Start serial objects    
-    Serial.begin(9600);
-    #ifdef XBEE 
-    xbee.setSerial(Serial);
-    #endif 
+    Serial.begin(9600); 
 
     // Set pin modes
     pinMode(LED, OUTPUT);
@@ -366,6 +336,18 @@ void setup() {
 
     // Set intial values
     rainfall = 0.0;
+
+    #ifdef ARDUINO_AVR_YUN
+      Bridge.begin();
+    #else   
+        #if defined(USE_WIFI101_SHIELD) || defined(ARDUINO_SAMD_MKR1000)
+          WiFi.begin(ssid, pass);
+        #else
+          Ethernet.begin(mac);
+        #endif
+    #endif
+
+    ThingSpeak.begin(client);
 }
 
 /**
@@ -385,10 +367,17 @@ void loop() {
 
         if (AS3935_ISR_Trig)    doAS3935();         
 
-        #ifdef XBEE
-        buildData(0); 
-        sendData();
-        #endif
+        ThingSpeak.setField(1, cTemp);
+        ThingSpeak.setField(2, h);
+        ThingSpeak.setField(3, rainfall);
+        ThingSpeak.setField(4, windSpeed[CURRENT]);
+        ThingSpeak.setField(5, windDirection[CURRENT]);
+        ThingSpeak.setField(6, windGust[CURRENT]);
+        ThingSpeak.setField(7, batVoltage);
+        ThingSpeak.setField(8, distance);
+
+        ThingSpeak.writeFields(channelId, apiKey);
+
         lastReadTime = millis();        
     }
 }
