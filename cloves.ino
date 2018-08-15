@@ -4,7 +4,6 @@
   Written by david durost <david.durost@gmail.com>
 */
 /* Includes */
-//#include <parse.h>
 #include <SoftwareSerial.h>                 // Serial library
 #include <ThingSpeak.h>                     // ThingSpeak library
 #include <WiFi101.h>                        // WiFi library
@@ -17,6 +16,8 @@
 #include <SFE_BMP180.h>                     // Barometric Pressure library
 #include <Time.h>                           // Time library
 
+#include "Credentials.h"                    // credentials settings
+
 /* Constants */
 // Misc
 #define SDA 20                              // sda
@@ -28,6 +29,7 @@
 #define F 1                                 // delimiter
 #define CURRENT 0                           // delimiter
 #define PREVIOUS 1                          // delimiter
+#define ARDUINO_ARCH_ESP8266                // flag
 // Barometric pressure
 #define ABS 0                               // delimiter
 #define SEA 1                               // delimiter
@@ -75,8 +77,6 @@ volatile int AS3935_ISR_Trig = 0;           // lightning arrestor
 uint8_t distance = 0;                           // lighting distance
 uint8_t payload[] = {0};                    // xbee
 unsigned long lastReadTime = 0;             // misc
-unsigned long channelId = 559277;           // ThingSpeak channel id
-const char * apiKey = "MQ6D6FCU467QKP04";   // ThingSpeak api key
 
 /* Objects */
 SDL_Weather_80422 weatherStation(
@@ -85,9 +85,6 @@ SDL_Weather_80422 weatherStation(
 Adafruit_HTU21DF htu = Adafruit_HTU21DF();  // humidity sensor
 PWF_AS3935 AS3935(CS, AS3935_PIN, SI);      // lightning arrestor
 SFE_BMP180 barometricPressure;              // barometric pressure
-
-#define USE_WIFI101_SHIELD
-//#define USE_ETHERNET_SHIELD
 
 #if defined(ARDUINO_ARCH_ESP8266) || defined(ARDUINO_ARCH_ESP32)
     #error "EPS8266 and ESP32 are not compatible with this example."
@@ -104,9 +101,7 @@ SFE_BMP180 barometricPressure;              // barometric pressure
   #if defined(USE_WIFI101_SHIELD) || defined(ARDUINO_SAMD_MKR1000)
     // Use WiFi
     #include <SPI.h>
-    #include <WiFi101.h>
-    char ssid[] = "RaggedJack";  
-    char pass[] = "g4t0rade";  
+    #include <WiFi101.h>  
     int status = WL_IDLE_STATUS;
     WiFiClient  client;
   #elif defined(USE_ETHERNET_SHIELD)
