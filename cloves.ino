@@ -4,6 +4,7 @@
   Written by david durost <david.durost@gmail.com>
 */
 /* Includes */
+//#include <parse.h>
 #include <SoftwareSerial.h>                 // Serial library
 #include <ThingSpeak.h>                     // ThingSpeak library
 #include <WiFi101.h>                        // WiFi library
@@ -71,6 +72,7 @@ float windSpeed[2] = { 0.0 };               // weather station
 float rainfall = 0.0;                       // weather station
 float batVoltage;                           // battery
 volatile int AS3935_ISR_Trig = 0;           // lightning arrestor
+uint8_t distance = 0;                           // lighting distance
 uint8_t payload[] = {0};                    // xbee
 unsigned long lastReadTime = 0;             // misc
 unsigned long channelId = 559277;           // ThingSpeak channel id
@@ -200,7 +202,7 @@ void doAS3935() {
             break;
         case 1: {
             String msg;
-            uint8_t distance = AS3935.AS3935_GetLightningDistKm();
+            distance = AS3935.AS3935_GetLightningDistKm();
             // 1 - near, 63 - distant
             if (1 == distance) {
                 #ifdef SERIAL
@@ -218,11 +220,7 @@ void doAS3935() {
                 Serial.print(distance);
                 Serial.println("km)");
                 #endif
-            }
-            #ifdef XBEE
-            buildData(distance);
-            sendData();
-            #endif  
+            } 
             break;
         }
         case 2:
@@ -296,7 +294,7 @@ void readBarometricPressure() {
  * Read battery voltage
  */
 void readBatteryVoltage() {
-    cd skipbatVoltage = (float(analogRead(BATTERY_PIN))*5)/1023*2;
+    batVoltage = (float(analogRead(BATTERY_PIN))*5)/1023*2;
 }
 
 /* Core Methods */
@@ -367,8 +365,8 @@ void loop() {
 
         if (AS3935_ISR_Trig)    doAS3935();         
 
-        ThingSpeak.setField(1, cTemp);
-        ThingSpeak.setField(2, h);
+        ThingSpeak.setField(1, (float)cTemp);
+        ThingSpeak.setField(2, htu.readHumidity());
         ThingSpeak.setField(3, rainfall);
         ThingSpeak.setField(4, windSpeed[CURRENT]);
         ThingSpeak.setField(5, windDirection[CURRENT]);
