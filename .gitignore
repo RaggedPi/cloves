@@ -1,5 +1,7 @@
+Credentials.h
+
 ThingSpeak.*
 Printers.*
 XBee.*
-cloves.ino.old
+*.old
 *.sublime*

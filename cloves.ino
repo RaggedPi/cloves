@@ -6,7 +6,6 @@
 /* Includes */
 #include <SoftwareSerial.h>                 // Serial library
 #include <ThingSpeak.h>                     // ThingSpeak library
-#include <WiFi101.h>                        // WiFi library
 #include <Wire.h>                           // One Wire library
 #include <SDL_Weather_80422.h>              // Weather Station library
 #include <Adafruit_ADS1015.h>               // library
@@ -25,8 +24,8 @@
 #define CS 53                               // chipselect
 #define LED 13                              // led pin
 #define SI 4                                // select input
-#define C 0                                 // delimiter
-#define F 1                                 // delimiter
+#define TEMP_C 0                                 // delimiter
+#define TEMP_F 1                                 // delimiter
 #define CURRENT 0                           // delimiter
 #define PREVIOUS 1                          // delimiter
 #define ARDUINO_ARCH_ESP8266                // flag
@@ -86,32 +85,13 @@ Adafruit_HTU21DF htu = Adafruit_HTU21DF();  // humidity sensor
 PWF_AS3935 AS3935(CS, AS3935_PIN, SI);      // lightning arrestor
 SFE_BMP180 barometricPressure;              // barometric pressure
 
-#if defined(ARDUINO_ARCH_ESP8266) || defined(ARDUINO_ARCH_ESP32)
-    #error "EPS8266 and ESP32 are not compatible with this example."
-#endif
-
-#if !defined(USE_WIFI101_SHIELD) && !defined(USE_ETHERNET_SHIELD) && !defined(ARDUINO_SAMD_MKR1000) && !defined(ARDUINO_AVR_YUN) 
-  #error "Uncomment the #define for either USE_WIFI101_SHIELD or USE_ETHERNET_SHIELD"
-#endif
-
-#if defined(ARDUINO_AVR_YUN)
-    #include "YunClient.h"
-    YunClient client;
+#if !defined(ARDUINO_ARCH_ESP8266)
+    #error "EPS8266 is required."
 #else
-  #if defined(USE_WIFI101_SHIELD) || defined(ARDUINO_SAMD_MKR1000)
-    // Use WiFi
-    #include <SPI.h>
-    #include <WiFi101.h>  
-    int status = WL_IDLE_STATUS;
-    WiFiClient  client;
-  #elif defined(USE_ETHERNET_SHIELD)
-    // Use wired ethernet shield
-    #include <SPI.h>
-    #include <Ethernet.h>
-    byte mac[] = { 0xDE, 0xAD, 0xBE, 0xEF, 0xFE, 0xED};
-    EthernetClient client;
-  #endif
+    #include <ESP8266WiFi.h>
 #endif
+int status = WL_IDLE_STATUS;
+WiFiClient  client;
 
 /* Utility Methods */
 /**
@@ -330,16 +310,8 @@ void setup() {
     // Set intial values
     rainfall = 0.0;
 
-    #ifdef ARDUINO_AVR_YUN
-      Bridge.begin();
-    #else   
-        #if defined(USE_WIFI101_SHIELD) || defined(ARDUINO_SAMD_MKR1000)
-          WiFi.begin(ssid, pass);
-        #else
-          Ethernet.begin(mac);
-        #endif
-    #endif
-
+    WiFi.begin(SSID, PSWD);
+c
     ThingSpeak.begin(client);
 }
 
@@ -373,4 +345,5 @@ void loop() {
 
         lastReadTime = millis();        
     }
+    delay(20000);
 }
